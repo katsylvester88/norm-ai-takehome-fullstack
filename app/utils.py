@@ -1,14 +1,17 @@
 from pydantic import BaseModel
 import qdrant_client
 from llama_index.vector_stores.qdrant import QdrantVectorStore
-from llama_index.embeddings import OpenAIEmbedding
-from llama_index.llms import OpenAI
-from llama_index.schema import Document
-from llama_index import (
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.llms.openai import OpenAI
+from llama_index.core.schema import Document
+from llama_index.core import (
     VectorStoreIndex,
-    ServiceContext,
+    Settings
 )
 from dataclasses import dataclass
+from typing import List
+import fitz 
+import re 
 import os
 
 key = os.environ['OPENAI_API_KEY']
@@ -27,6 +30,23 @@ class Output(BaseModel):
     query: str
     response: str
     citations: list[Citation]
+
+class ParsedClause(BaseModel): 
+    number: str 
+    title: str 
+    text: str 
+    hierarchy: List[str]
+
+    def to_document(self) -> Document: 
+        return Document(
+            text = self.text, 
+            metadata = {
+                "number": self.number, 
+                "title": self.title, 
+                "hierarchy": self.hierarchy, 
+                "source": "Laws of the Seven Kingdoms" # maybe shouldn't hardcode? (TODO)
+            }
+        )
 
 class DocumentService:
 
@@ -54,6 +74,71 @@ class DocumentService:
         return docs
 
      """
+    def extract_pdf_text(self, file_path: str) -> str:
+        doc = fitz.open(file_path)
+        text = ""
+        for page in doc:
+            text += page.get_text() + "\n"
+        return text
+
+    def create_documents(self, file_path: str) -> List[Document]: 
+        # need to convert PDF -> text 
+        raw_text = self.extract_pdf_text(file_path) 
+        print(raw_text) 
+        lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+
+        # variables for keeping track of state
+        clauses = []
+        current_title = None 
+        current_clause = None
+
+        # match pattern for number-only lines 
+        # (pdf parser splits the numbers onto their own lines)
+        number_pattern = re.compile(r"^(\d+(\.\d+)*\.)$")
+        n_lines = len(lines)
+
+        idx = 0 
+        while idx < n_lines: 
+            line = lines[idx]
+            match = number_pattern.match(line) 
+
+            if match: 
+                number = match.group(1).rstrip('.')
+                parts = number.split('.')
+
+                # just one part = top-level section = next line is title of section
+                if len(parts) == 1: 
+                    if idx + 1 < n_lines: 
+                        current_title = lines[idx+1].strip() 
+                    idx += 2 # skip title number and title 
+                # multi-part number = new clause 
+                else: 
+                    # close previous clause if there was one 
+                    if current_clause:  
+                        clauses.append(current_clause)
+
+                    # start new clause  
+                    if idx + 1 < n_lines: 
+                        text = lines[idx + 1].strip() 
+                    else: 
+                        text = ""
+                    current_clause = ParsedClause(
+                        number=number,
+                        title=current_title or "Unknown",
+                        text=text,
+                        hierarchy=parts
+                    )
+                    idx += 2 # skip clause number and text 
+            else: # in case multi-paragraph clauses ever arise 
+                if current_clause: 
+                    current_clause.text += " " + line 
+                idx += 1 # normal step forward 
+
+        # last one 
+        if current_clause:
+            clauses.append(current_clause)
+
+        return [c.to_document() for c in clauses]
 
 class QdrantService:
     def __init__(self, k: int = 2):
@@ -65,57 +150,59 @@ class QdrantService:
                 
         vstore = QdrantVectorStore(client=client, collection_name='temp')
 
-        service_context = ServiceContext.from_defaults(
-            embed_model=OpenAIEmbedding(),
-            llm=OpenAI(api_key=key, model="gpt-4")
-            )
+        Settings.embed_model = OpenAIEmbedding(batch_size=10)
+        Settings.llm = OpenAI(api_key=key, model="gpt-3.5-turbo") # TODO: switch back to "gpt-4"
 
-        self.index = VectorStoreIndex.from_vector_store(
-            vector_store=vstore, 
-            service_context=service_context
-            )
+        self.index = VectorStoreIndex.from_vector_store(vector_store=vstore)
 
     def load(self, docs = list[Document]):
         self.index.insert_nodes(docs)
     
     def query(self, query_str: str) -> Output:
+        # initialize query engine & run query 
+        query_engine = self.index.as_query_engine(similarity_top_k=self.k)
+        response = query_engine.query(query_str)
 
-        """
-        This method needs to initialize the query engine, run the query, and return
-        the result as a pydantic Output class. This is what will be returned as
-        JSON via the FastAPI endpount. Fee free to do this however you'd like, but
-        a its worth noting that the llama-index package has a CitationQueryEngine...
-
-        Also, be sure to make use of self.k (the number of vectors to return based
-        on semantic similarity).
-
-        # Example output object
-        citations = [
-            Citation(source="Law 1", text="Theft is punishable by hanging"),
-            Citation(source="Law 2", text="Tax evasion is punishable by banishment."),
-        ]
-
-        output = Output(
-            query=query_str, 
-            response=response_text, 
-            citations=citations
+        # create citations from response's source nodes  
+        citations = []
+        for node in response.source_nodes:
+            number = node.metadata.get("number", "Unknown")
+            title = node.metadata.get("title", "Unknown")
+            citations.append(
+                Citation(
+                    source=f"{title}, Law {number}",
+                    text=node.text.strip()
+                )
             )
-        
-        return output
+        # create output from response & citations 
+        output = Output(
+            query=query_str,
+            response=response.response.strip(),
+            citations=citations
+        )
 
-        """
+        return output
        
 
 if __name__ == "__main__":
-    # Example workflow
-    doc_serivce = DocumentService() # implemented
-    docs = doc_serivce.create_documents() # NOT implemented
+    doc_service = DocumentService()
+    docs = doc_service.create_documents("docs/laws.pdf")  # <-- adjust path if needed
 
-    index = QdrantService() # implemented
-    index.connect() # implemented
-    index.load() # implemented
+    print(f"Loaded {len(docs)} documents")
 
-    index.query("what happens if I steal?") # NOT implemented
+    qservice = QdrantService(k=3)
+    qservice.connect()
+    qservice.load(docs)
+
+    query_text = "What happens if someone steals something?"
+    output = qservice.query(query_text)
+
+    print("\n--- TEST OUTPUT ---")
+    print(f"Query: {output.query}")
+    print(f"Response: {output.response}")
+    print("Citations:")
+    for c in output.citations:
+        print(f" - {c.source}: {c.text}")
 
 
 
