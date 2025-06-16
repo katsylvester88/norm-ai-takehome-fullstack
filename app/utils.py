@@ -21,8 +21,7 @@ class Input:
     query: str
     file_path: str
 
-@dataclass
-class Citation:
+class Citation(BaseModel):
     source: str
     text: str
 
@@ -35,7 +34,7 @@ class ParsedClause(BaseModel):
     number: str 
     title: str 
     text: str 
-    hierarchy: List[str]
+    # source: str
 
     def to_document(self) -> Document: 
         return Document(
@@ -43,37 +42,16 @@ class ParsedClause(BaseModel):
             metadata = {
                 "number": self.number, 
                 "title": self.title, 
-                "hierarchy": self.hierarchy, 
-                "source": "Laws of the Seven Kingdoms" # maybe shouldn't hardcode? (TODO)
+                # "source": self.source
             }
         )
 
 class DocumentService:
-
     """
-    Update this service to load the pdf and extract its contents.
-    The example code below will help with the data structured required
-    when using the QdrantService.load() method below. Note: for this
-    exercise, ignore the subtle difference between llama-index's 
-    Document and Node classes (i.e, treat them as interchangeable).
-
-    # example code
-    def create_documents() -> list[Document]:
-
-        docs = [
-            Document(
-                metadata={"Section": "Law 1"},
-                text="Theft is punishable by hanging",
-            ),
-            Document(
-                metadata={"Section": "Law 2"},
-                text="Tax evasion is punishable by banishment.",
-            ),
-        ]
-
-        return docs
-
-     """
+    Class for loading the legal pdf and extracting its contents.
+    Function create_documents returns the pdf's contents as Documents, where each 
+    clause is a separate Document. 
+    """
     def extract_pdf_text(self, file_path: str) -> str:
         doc = fitz.open(file_path)
         text = ""
@@ -125,8 +103,7 @@ class DocumentService:
                     current_clause = ParsedClause(
                         number=number,
                         title=current_title or "Unknown",
-                        text=text,
-                        hierarchy=parts
+                        text=text
                     )
                     idx += 2 # skip clause number and text 
             else: # in case multi-paragraph clauses ever arise 
@@ -141,6 +118,9 @@ class DocumentService:
         return [c.to_document() for c in clauses]
 
 class QdrantService:
+    """
+    Creates, loads vectors into, and handles queries to a vector database. 
+    """
     def __init__(self, k: int = 2):
         self.index = None
         self.k = k
@@ -151,7 +131,7 @@ class QdrantService:
         vstore = QdrantVectorStore(client=client, collection_name='temp')
 
         Settings.embed_model = OpenAIEmbedding(batch_size=10)
-        Settings.llm = OpenAI(api_key=key, model="gpt-3.5-turbo") # TODO: switch back to "gpt-4"
+        Settings.llm = OpenAI(api_key=key, model="gpt-3.5-turbo")
 
         self.index = VectorStoreIndex.from_vector_store(vector_store=vstore)
 
@@ -185,25 +165,19 @@ class QdrantService:
        
 
 if __name__ == "__main__":
-    doc_service = DocumentService()
-    docs = doc_service.create_documents("docs/laws.pdf")  # <-- adjust path if needed
+    # Example workflow
+    doc_serivce = DocumentService() 
+    docs = doc_serivce.create_documents("docs/laws.pdf") 
 
-    print(f"Loaded {len(docs)} documents")
+    index = QdrantService(k=3) 
+    index.connect() 
+    index.load(docs) 
 
-    qservice = QdrantService(k=3)
-    qservice.connect()
-    qservice.load(docs)
+    query = "what happens if I steal?"
+    response = index.query(query) 
 
-    query_text = "What happens if someone steals something?"
-    output = qservice.query(query_text)
-
-    print("\n--- TEST OUTPUT ---")
-    print(f"Query: {output.query}")
-    print(f"Response: {output.response}")
-    print("Citations:")
-    for c in output.citations:
-        print(f" - {c.source}: {c.text}")
-
+    print(f"QUERY: {query}")
+    print(f"RESPONSE: {response}")
 
 
 
