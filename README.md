@@ -11,8 +11,7 @@ cite the most relevant clauses
 - GPT-4 generates a comprehensive answer based on the retrieved context
 - `app/main.py` exposes this functionality as a FastAPI service with an interactive Swagger UI.
 
-**Note:** The `frontend/` folder is undeveloped (it wasn't a target of my 
-takehome exercise).
+**Note:** The `frontend/` folder is intentionally undeveloped (it wasn't a target of my takehome exercise).
 
 ## Usage Instructions
 Upon cloning the repository: 
@@ -23,9 +22,13 @@ Upon cloning the repository:
 
 2. **Run the container**
 
-(Ensure OPENAI_API_KEY is set as an environment variable before running.) 
+Ensure OPENAI_API_KEY is set as an environment variable:
 
-`docker run -e OPENAI_API_KEY=YOUR_KEY -p 8000:80 <container name>`
+`export OPENAI_API_KEY=<your api key>`
+
+Then run the container with:
+
+`docker run -e OPENAI_API_KEY -p 8000:80 <container name>`
 
 3. **Query the API**
 * Open http://localhost:8000/docs
@@ -49,7 +52,7 @@ necessary for this particular input.
 #### main.py 
 * I set k=3 because I felt it met a good balance of detail for potentially 
 complex user questions, while not providing superfluous information. In 
-production this could be tuned with for particular use cases
+production this could be tuned for particular use cases
 
 #### requirements.txt
 * I downgraded the pydantic version to 1.10.x for compatibility with qdrant-client
