@@ -18,10 +18,12 @@ takehome exercise).
 Upon cloning the repository: 
 
 1. **Build the Docker image**
+
 `docker build -t <container name> .`
 
 2. **Run the container**
-Ensure OPENAI_API_KEY is set as an environment variable before running. 
+
+(Ensure OPENAI_API_KEY is set as an environment variable before running.) 
 
 `docker run -e OPENAI_API_KEY=YOUR_KEY -p 8000:80 <container name>`
 
