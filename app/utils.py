@@ -34,7 +34,6 @@ class ParsedClause(BaseModel):
     number: str 
     title: str 
     text: str 
-    # source: str
 
     def to_document(self) -> Document: 
         return Document(
@@ -42,7 +41,6 @@ class ParsedClause(BaseModel):
             metadata = {
                 "number": self.number, 
                 "title": self.title, 
-                # "source": self.source
             }
         )
 
@@ -62,7 +60,12 @@ class DocumentService:
     def create_documents(self, file_path: str) -> List[Document]: 
         # need to convert PDF -> text 
         raw_text = self.extract_pdf_text(file_path) 
-        print(raw_text) 
+
+        # cutting out the citations at the end 
+        citation_index = raw_text.find("Citations")
+        raw_text = raw_text[:citation_index]
+
+        # splitting into lines 
         lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
 
         # variables for keeping track of state
@@ -131,7 +134,7 @@ class QdrantService:
         vstore = QdrantVectorStore(client=client, collection_name='temp')
 
         Settings.embed_model = OpenAIEmbedding(batch_size=10)
-        Settings.llm = OpenAI(api_key=key, model="gpt-3.5-turbo")
+        Settings.llm = OpenAI(api_key=key, model="gpt-4") 
 
         self.index = VectorStoreIndex.from_vector_store(vector_store=vstore)
 
